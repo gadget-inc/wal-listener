@@ -95,12 +95,12 @@ func factoryPublisher(ctx context.Context, cfg *config.PublisherCfg, logger *slo
 
 		return pub, nil
 	case config.PublisherTypeGooglePubSub:
-		pubSubConn, err := publisher.NewPubSubConnection(ctx, logger, cfg.PubSubProjectID)
+		pubSubConn, err := publisher.NewPubSubConnection(ctx, logger, cfg.PubSubProjectID, cfg.EnableOrdering)
 		if err != nil {
 			return nil, fmt.Errorf("could not create pubsub connection: %w", err)
 		}
 
-		return publisher.NewGooglePubSubPublisher(pubSubConn), nil
+		return publisher.NewGooglePubSubPublisher(pubSubConn, cfg.EnableOrdering), nil
 	default:
 		return nil, fmt.Errorf("unknown publisher type: %s", cfg.Type)
 	}

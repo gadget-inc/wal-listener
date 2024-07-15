@@ -53,6 +53,7 @@ type PublisherCfg struct {
 	ClientKey       string `mapstructure:"client_key"`
 	CACert          string `mapstructure:"ca_cert"`
 	PubSubProjectID string `mapstructure:"pubsub_project_id"`
+	EnableOrdering  bool   `mapstructure:"enable_ordering"`
 }
 
 // DatabaseCfg path of the PostgreSQL DB config.

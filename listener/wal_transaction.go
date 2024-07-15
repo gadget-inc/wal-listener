@@ -247,6 +247,16 @@ func (w *WalTransaction) CreateEventsWithFilter(ctx context.Context, tableMap ma
 			event.DataOld = dataOld
 			event.EventTime = *w.CommitTime
 
+			if len(item.NewColumns) > 0 {
+				var pk []interface{}
+				for _, val := range item.NewColumns {
+					if val.isKey {
+						pk = append(pk, data[val.name])
+					}
+				}
+				event.PrimaryKey = pk
+			}
+
 			if alwaysValid {
 				output <- event
 				continue

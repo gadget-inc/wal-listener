@@ -13,15 +13,16 @@ import (
 
 // PubSubConnection represent Pub/Sub connection.
 type PubSubConnection struct {
-	logger    *slog.Logger
-	client    *pubsub.Client
-	projectID string
-	topics    map[string]*pubsub.Topic
-	mu        sync.RWMutex
+	logger         *slog.Logger
+	client         *pubsub.Client
+	projectID      string
+	topics         map[string]*pubsub.Topic
+	enableOrdering bool
+	mu             sync.RWMutex
 }
 
 // NewPubSubConnection create new connection with specified project id.
-func NewPubSubConnection(ctx context.Context, logger *slog.Logger, pubSubProjectID string) (*PubSubConnection, error) {
+func NewPubSubConnection(ctx context.Context, logger *slog.Logger, pubSubProjectID string, enableOrdering bool) (*PubSubConnection, error) {
 	if pubSubProjectID == "" {
 		return nil, fmt.Errorf("project id is required for pub sub connection")
 	}
@@ -32,10 +33,11 @@ func NewPubSubConnection(ctx context.Context, logger *slog.Logger, pubSubProject
 	}
 
 	return &PubSubConnection{
-		logger:    logger,
-		client:    cli,
-		projectID: pubSubProjectID,
-		topics:    make(map[string]*pubsub.Topic),
+		logger:         logger,
+		client:         cli,
+		projectID:      pubSubProjectID,
+		enableOrdering: enableOrdering,
+		topics:         make(map[string]*pubsub.Topic),
 	}, nil
 }
 
@@ -48,6 +50,7 @@ func (c *PubSubConnection) getTopic(topic string) *pubsub.Topic {
 	}
 
 	t := c.client.TopicInProject(topic, c.projectID)
+	t.EnableMessageOrdering = c.enableOrdering
 	t.PublishSettings.NumGoroutines = 1
 	t.PublishSettings.CountThreshold = 1
 	c.topics[topic] = t
@@ -55,14 +58,13 @@ func (c *PubSubConnection) getTopic(topic string) *pubsub.Topic {
 	return t
 }
 
-func (c *PubSubConnection) Publish(ctx context.Context, topic string, data []byte) error {
+func (c *PubSubConnection) Publish(ctx context.Context, topic string, data []byte, orderingKey string) error {
 	t := c.getTopic(topic)
 	defer t.Flush()
 
-	var res *pubsub.PublishResult
-
-	res = t.Publish(ctx, &pubsub.Message{
-		Data: data,
+	res := t.Publish(ctx, &pubsub.Message{
+		Data:        data,
+		OrderingKey: orderingKey,
 	})
 
 	if _, err := res.Get(ctx); err != nil {

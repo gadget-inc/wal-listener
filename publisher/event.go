@@ -10,13 +10,14 @@ import (
 
 // Event structure for publishing to the publisher.
 type Event struct {
-	ID        uuid.UUID      `json:"id"`
-	Schema    string         `json:"schema"`
-	Table     string         `json:"table"`
-	Action    string         `json:"action"`
-	Data      map[string]any `json:"data"`
-	DataOld   map[string]any `json:"dataOld"`
-	EventTime time.Time      `json:"commitTime"`
+	ID         uuid.UUID      `json:"id"`
+	Schema     string         `json:"schema"`
+	Table      string         `json:"table"`
+	Action     string         `json:"action"`
+	PrimaryKey []interface{}  `json:"primaryKey"`
+	Data       map[string]any `json:"data"`
+	DataOld    map[string]any `json:"dataOld"`
+	EventTime  time.Time      `json:"commitTime"`
 }
 
 // SubjectName creates subject name from the prefix, schema and table name. Also using topic map from cfg.

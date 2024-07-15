@@ -3,6 +3,7 @@ package publisher
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/goccy/go-json"
 )
@@ -10,12 +11,14 @@ import (
 // GooglePubSubPublisher represent Pub/Sub publisher.
 type GooglePubSubPublisher struct {
 	pubSubConnection *PubSubConnection
+	enableOrdering   bool
 }
 
 // NewGooglePubSubPublisher create new instance of GooglePubSubPublisher.
-func NewGooglePubSubPublisher(pubSubConnection *PubSubConnection) *GooglePubSubPublisher {
+func NewGooglePubSubPublisher(pubSubConnection *PubSubConnection, enableOrdering bool) *GooglePubSubPublisher {
 	return &GooglePubSubPublisher{
-		pubSubConnection,
+		pubSubConnection: pubSubConnection,
+		enableOrdering:   enableOrdering,
 	}
 }
 
@@ -25,8 +28,18 @@ func (p *GooglePubSubPublisher) Publish(ctx context.Context, topic string, event
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
+	var orderingKey string
+	if p.enableOrdering {
+		if len(event.PrimaryKey) > 0 {
+			strKeys := make([]string, len(event.PrimaryKey))
+			for i, key := range event.PrimaryKey {
+				strKeys[i] = fmt.Sprintf("%v", key)
+			}
+			orderingKey = strings.Join(strKeys, "-")
+		}
+	}
 
-	return p.pubSubConnection.Publish(ctx, topic, body)
+	return p.pubSubConnection.Publish(ctx, topic, body, orderingKey)
 }
 
 func (p *GooglePubSubPublisher) Close() error {
