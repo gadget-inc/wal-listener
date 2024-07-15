@@ -115,6 +115,8 @@ func (c *Column) AssertValue(src []byte) {
 		val, err = time.Parse(timestampLayout, strSrc)
 	case TimestamptzOID:
 		val, err = time.ParseInLocation(timestampWithTZLayout, strSrc, time.UTC)
+	case TSVectorOID:
+		val = strSrc
 	case DateOID, TimeOID:
 		val = strSrc
 	case UUIDOID:
