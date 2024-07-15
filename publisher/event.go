@@ -8,7 +8,7 @@ import (
 	"github.com/ihippik/wal-listener/v2/config"
 )
 
-// Event structure for publishing to the NATS server.
+// Event structure for publishing to the publisher.
 type Event struct {
 	ID        uuid.UUID      `json:"id"`
 	Schema    string         `json:"schema"`
@@ -21,15 +21,18 @@ type Event struct {
 
 // SubjectName creates subject name from the prefix, schema and table name. Also using topic map from cfg.
 func (e *Event) SubjectName(cfg *config.Config) string {
-	topic := fmt.Sprintf("%s_%s", e.Schema, e.Table)
+	name := fmt.Sprintf("%s_%s", e.Schema, e.Table)
 
 	if cfg.Listener.TopicsMap != nil {
-		if t, ok := cfg.Listener.TopicsMap[topic]; ok {
-			topic = t
+		for pattern, replacement := range cfg.Listener.TopicsMap {
+			if pattern.MatchString(name) {
+				name = pattern.ReplaceAllString(name, replacement)
+				break
+			}
 		}
 	}
 
-	topic = cfg.Publisher.Topic + "." + cfg.Publisher.TopicPrefix + topic
+	name = cfg.Publisher.Topic + "." + cfg.Publisher.TopicPrefix + name
 
-	return topic
+	return name
 }

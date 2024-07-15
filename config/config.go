@@ -2,9 +2,12 @@ package config
 
 import (
 	"fmt"
+	"reflect"
+	"regexp"
 	"time"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 
 	cfg "github.com/ihippik/config"
@@ -36,7 +39,7 @@ type ListenerCfg struct {
 	RefreshConnection time.Duration `valid:"required"`
 	HeartbeatInterval time.Duration `valid:"required"`
 	Filter            FilterStruct
-	TopicsMap         map[string]string
+	TopicsMap         map[*regexp.Regexp]string `valid:"-"`
 }
 
 // PublisherCfg represent configuration for any publisher types.
@@ -82,9 +85,56 @@ func InitConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("error reading config: %w", err)
 	}
 
-	if err := viper.Unmarshal(&conf); err != nil {
+	if err := viper.Unmarshal(&conf, viper.DecodeHook(
+		mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			mapstructure.StringToSliceHookFunc(","),
+			regexpMapHook(),
+		),
+	)); err != nil {
+		// if err := viper.Unmarshal(&conf); err != nil {
 		return nil, fmt.Errorf("unable to decode into config struct: %w", err)
 	}
 
 	return &conf, nil
+}
+
+func regexpMapHook() mapstructure.DecodeHookFuncType {
+	return func(
+		f reflect.Type,
+		t reflect.Type,
+		data interface{},
+	) (interface{}, error) {
+		if f.Kind() != reflect.Map || f.Key().Kind() != reflect.String || f.Elem().Kind() != reflect.Interface {
+			return data, nil
+		}
+
+		if t != reflect.TypeOf(map[*regexp.Regexp]string{}) {
+			return data, nil
+		}
+
+		inputMap := data.(map[string]interface{})
+		outputMap := make(map[*regexp.Regexp]string)
+
+		for key, value := range inputMap {
+			var re *regexp.Regexp
+			var err error
+
+			if len(key) > 1 && key[0] == '/' && key[len(key)-1] == '/' {
+				re, err = regexp.Compile(key[1 : len(key)-1])
+				if err != nil {
+					return nil, fmt.Errorf("invalid regexp topic map regexp %s: %w", key, err)
+				}
+			} else {
+				re, err = regexp.Compile("^" + regexp.QuoteMeta(key) + "$")
+				if err != nil {
+					return nil, fmt.Errorf("invalid static topic map key %s: %w", key, err)
+				}
+			}
+
+			outputMap[re] = value.(string)
+		}
+
+		return outputMap, nil
+	}
 }

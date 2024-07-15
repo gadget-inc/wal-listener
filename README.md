@@ -63,12 +63,23 @@ This filter means that we only process events occurring with the `users` table,
 and in particular `insert` and `update` data.
 
 ### Topic mapping
-By default, output NATS topic name consist of prefix, DB schema, and DB table name,
-but if you want to send all update in one topic you should be configured the topic map:
+By default, events are outputted to the publisher topic in the form of `<topic>.<topic_prefix><event_schema>_<event_table>`. 
+
+
+You can rewrite individual tables to be sent to different topics using the `topicsMap`:
+
 ```yaml
+# send all events from the main.users and main.customers table to the same `notifier` topic
 topicsMap:
   main_users: "notifier"
   main_customers: "notifier"
+```
+
+`topicsMap` also supports regexp keys that can be used to rewrite the topic name based on the table name, and allows using capturing groups in the to re-use parts of the incoming topic. To use a regexp, you need to prefix the key with a `/` and escape the special characters:
+
+```yaml
+topicsMap:
+  "/main_(.*)/": "main_changes_$1"
 ```
 
 ## DB setting
