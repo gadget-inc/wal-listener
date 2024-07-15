@@ -217,6 +217,7 @@ func (w *WalTransaction) CreateActionData(
 // action and create events for each value.
 func (w *WalTransaction) CreateEventsWithFilter(ctx context.Context, tableMap map[string][]string) <-chan *publisher.Event {
 	output := make(chan *publisher.Event)
+	alwaysValid := len(tableMap) == 0
 
 	go func(ctx context.Context) {
 		for _, item := range w.Actions {
@@ -245,6 +246,11 @@ func (w *WalTransaction) CreateEventsWithFilter(ctx context.Context, tableMap ma
 			event.Data = data
 			event.DataOld = dataOld
 			event.EventTime = *w.CommitTime
+
+			if alwaysValid {
+				output <- event
+				continue
+			}
 
 			actions, validTable := tableMap[item.Table]
 
