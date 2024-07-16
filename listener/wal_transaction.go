@@ -215,9 +215,8 @@ func (w *WalTransaction) CreateActionData(
 
 // CreateEventsWithFilter filter WAL message by table,
 // action and create events for each value.
-func (w *WalTransaction) CreateEventsWithFilter(ctx context.Context, tableMap map[string][]string) <-chan *publisher.Event {
+func (w *WalTransaction) CreateEventsWithFilter(ctx context.Context, includeTableMap map[string][]string, excludeTables []string) <-chan *publisher.Event {
 	output := make(chan *publisher.Event)
-	alwaysValid := len(tableMap) == 0
 
 	go func(ctx context.Context) {
 		for _, item := range w.Actions {
@@ -257,17 +256,19 @@ func (w *WalTransaction) CreateEventsWithFilter(ctx context.Context, tableMap ma
 				event.PrimaryKey = pk
 			}
 
-			if alwaysValid {
-				output <- event
-				continue
-			}
+			if len(includeTableMap) > 0 {
+				actions, validTable := includeTableMap[item.Table]
 
-			actions, validTable := tableMap[item.Table]
-
-			validAction := inArray(actions, item.Kind.string())
-			if validTable && validAction {
-				output <- event
-				continue
+				validAction := inArray(actions, item.Kind.string())
+				if validTable && validAction {
+					output <- event
+					continue
+				}
+			} else if len(excludeTables) > 0 {
+				if !inArray(excludeTables, item.Table) {
+					output <- event
+					continue
+				}
 			}
 
 			w.monitor.IncFilterSkippedEvents(item.Table)

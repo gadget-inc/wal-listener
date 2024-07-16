@@ -608,7 +608,7 @@ func TestListener_Stream(t *testing.T) {
 						SlotName:          "myslot",
 						AckTimeout:        0,
 						HeartbeatInterval: 5 * time.Millisecond,
-						Filter: config.FilterStruct{
+						Include: config.IncludeStruct{
 							Tables: map[string][]string{"users": {"insert"}},
 						},
 					},
@@ -641,7 +641,7 @@ func TestListener_Stream(t *testing.T) {
 					Listener: &config.ListenerCfg{
 						SlotName:          "myslot",
 						AckTimeout:        0,
-						HeartbeatInterval: 1, Filter: config.FilterStruct{
+						HeartbeatInterval: 1, Include: config.IncludeStruct{
 							Tables: map[string][]string{"users": {"insert"}},
 						},
 					},
@@ -711,7 +711,7 @@ func TestListener_Stream(t *testing.T) {
 					Listener: &config.ListenerCfg{
 						SlotName:          "myslot",
 						AckTimeout:        0,
-						HeartbeatInterval: 1, Filter: config.FilterStruct{
+						HeartbeatInterval: 1, Include: config.IncludeStruct{
 							Tables: map[string][]string{"users": {"insert"}},
 						},
 					},
@@ -831,7 +831,7 @@ func TestListener_Process(t *testing.T) {
 					AckTimeout:        0,
 					RefreshConnection: 1,
 					HeartbeatInterval: 2,
-					Filter: config.FilterStruct{
+					Include: config.IncludeStruct{
 						Tables: nil,
 					},
 					TopicsMap: nil,
@@ -875,7 +875,7 @@ func TestListener_Process(t *testing.T) {
 					AckTimeout:        0,
 					RefreshConnection: 1,
 					HeartbeatInterval: 2,
-					Filter: config.FilterStruct{
+					Include: config.IncludeStruct{
 						Tables: nil,
 					},
 					TopicsMap: nil,
@@ -910,7 +910,7 @@ func TestListener_Process(t *testing.T) {
 					AckTimeout:        0,
 					RefreshConnection: 1,
 					HeartbeatInterval: 2,
-					Filter: config.FilterStruct{
+					Include: config.IncludeStruct{
 						Tables: nil,
 					},
 					TopicsMap: nil,
@@ -931,7 +931,7 @@ func TestListener_Process(t *testing.T) {
 					AckTimeout:        0,
 					RefreshConnection: 1,
 					HeartbeatInterval: 2,
-					Filter: config.FilterStruct{
+					Include: config.IncludeStruct{
 						Tables: nil,
 					},
 					TopicsMap: nil,

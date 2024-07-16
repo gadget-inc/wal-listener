@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"regexp"
 	"time"
@@ -25,7 +26,7 @@ const (
 // Config for wal-listener.
 type Config struct {
 	Listener   *ListenerCfg  `valid:"required"`
-	Database   *DatabaseCfg  `valid:"required"`
+	Database   *DatabaseCfg  `valid:"required" mapstructure:"database"`
 	Publisher  *PublisherCfg `valid:"required"`
 	Logger     *cfg.Logger   `valid:"required"`
 	Monitoring cfg.Monitoring
@@ -38,7 +39,8 @@ type ListenerCfg struct {
 	AckTimeout        time.Duration
 	RefreshConnection time.Duration `valid:"required"`
 	HeartbeatInterval time.Duration `valid:"required"`
-	Filter            FilterStruct
+	Include           IncludeStruct
+	Exclude           ExcludeStruct
 	TopicsMap         map[*regexp.Regexp]string `valid:"-"`
 }
 
@@ -62,12 +64,17 @@ type DatabaseCfg struct {
 	Port     uint16 `valid:"required"`
 	Name     string `valid:"required"`
 	User     string `valid:"required"`
-	Password string `valid:"required"`
+	Password string `valid:"required" mapstructure:"password"`
 }
 
-// FilterStruct incoming WAL message filter.
-type FilterStruct struct {
+// IncludeStruct incoming WAL message filter.
+type IncludeStruct struct {
 	Tables map[string][]string
+}
+
+// ExcludeStruct incoming WAL message filter.
+type ExcludeStruct struct {
+	Tables []string
 }
 
 // Validate config data.
@@ -79,21 +86,20 @@ func (c Config) Validate() error {
 // InitConfig load config from file.
 func InitConfig(path string) (*Config, error) {
 	var conf Config
-
-	viper.SetConfigFile(path)
-
-	if err := viper.ReadInConfig(); err != nil {
+	v := viper.NewWithOptions(viper.KeyDelimiter("::"))
+	v.SetDefault("database::password", os.Getenv("DATABASE_PASSWORD"))
+	v.SetConfigFile(path)
+	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("error reading config: %w", err)
 	}
 
-	if err := viper.Unmarshal(&conf, viper.DecodeHook(
+	if err := v.Unmarshal(&conf, viper.DecodeHook(
 		mapstructure.ComposeDecodeHookFunc(
 			mapstructure.StringToTimeDurationHookFunc(),
 			mapstructure.StringToSliceHookFunc(","),
 			regexpMapHook(),
 		),
 	)); err != nil {
-		// if err := viper.Unmarshal(&conf); err != nil {
 		return nil, fmt.Errorf("unable to decode into config struct: %w", err)
 	}
 

@@ -3,7 +3,7 @@ listener:
   slotName: myslot_1
   refreshConnection: 30s
   heartbeatInterval: 10s
-  filter:
+  include:
     tables:
       seasons:
         - insert

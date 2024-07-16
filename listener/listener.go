@@ -340,7 +340,7 @@ func (l *Listener) processMessage(ctx context.Context, msg *pgx.ReplicationMessa
 	}
 
 	if tx.CommitTime != nil {
-		for event := range tx.CreateEventsWithFilter(ctx, l.cfg.Listener.Filter.Tables) {
+		for event := range tx.CreateEventsWithFilter(ctx, l.cfg.Listener.Include.Tables, l.cfg.Listener.Exclude.Tables) {
 			subjectName := event.SubjectName(l.cfg)
 
 			if err := l.publisher.Publish(ctx, subjectName, event); err != nil {
