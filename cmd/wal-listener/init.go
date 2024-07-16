@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 
@@ -22,6 +23,12 @@ func initPgxConnections(cfg *config.DatabaseCfg, logger *slog.Logger) (*pgx.Conn
 		Database: cfg.Name,
 		User:     cfg.User,
 		Password: cfg.Password,
+	}
+
+	if cfg.SSL {
+		pgxConf.TLSConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
 	}
 
 	pgConn, err := pgx.Connect(pgxConf)

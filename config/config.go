@@ -65,6 +65,7 @@ type DatabaseCfg struct {
 	Name     string `valid:"required"`
 	User     string `valid:"required"`
 	Password string `valid:"required" mapstructure:"password"`
+	SSL      bool   `mapstructure:"ssl"`
 }
 
 // IncludeStruct incoming WAL message filter.
