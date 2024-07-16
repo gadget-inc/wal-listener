@@ -11,6 +11,7 @@ require (
 	github.com/ihippik/config v0.1.1
 	github.com/jackc/pgx v3.6.2+incompatible
 	github.com/magiconair/properties v1.8.7
+	github.com/mitchellh/mapstructure v1.5.0
 	github.com/nats-io/nats.go v1.31.0
 	github.com/prometheus/client_golang v1.17.0
 	github.com/spf13/viper v1.18.1
@@ -60,7 +61,6 @@ require (
 	github.com/klauspost/compress v1.17.7 // indirect
 	github.com/lib/pq v1.10.7 // indirect
 	github.com/matttproud/golang_protobuf_extensions/v2 v2.0.0 // indirect
-	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/nats-io/nkeys v0.4.6 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.1.1 // indirect
