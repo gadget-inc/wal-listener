@@ -19,9 +19,10 @@ type ActionKind string
 
 // kind of WAL message.
 const (
-	ActionKindInsert ActionKind = "INSERT"
-	ActionKindUpdate ActionKind = "UPDATE"
-	ActionKindDelete ActionKind = "DELETE"
+	ActionKindInsert   ActionKind = "INSERT"
+	ActionKindUpdate   ActionKind = "UPDATE"
+	ActionKindDelete   ActionKind = "DELETE"
+	ActionKindTruncate ActionKind = "TRUNCATE"
 )
 
 type transactionMonitor interface {
@@ -30,26 +31,30 @@ type transactionMonitor interface {
 
 // WalTransaction transaction specified WAL message.
 type WalTransaction struct {
-	log           *slog.Logger
-	monitor       transactionMonitor
-	LSN           int64
-	BeginTime     *time.Time
-	CommitTime    *time.Time
-	RelationStore map[int32]RelationData
-	Actions       []ActionData
-	pool          *sync.Pool
+	log             *slog.Logger
+	monitor         transactionMonitor
+	LSN             int64
+	BeginTime       *time.Time
+	CommitTime      *time.Time
+	RelationStore   map[int32]RelationData
+	Actions         []ActionData
+	pool            *sync.Pool
+	includeTableMap map[string][]string
+	excludeTables   []string
 }
 
 // NewWalTransaction create and initialize new WAL transaction.
-func NewWalTransaction(log *slog.Logger, pool *sync.Pool, monitor transactionMonitor) *WalTransaction {
+func NewWalTransaction(log *slog.Logger, pool *sync.Pool, monitor transactionMonitor, includeTableMap map[string][]string, excludeTables []string) *WalTransaction {
 	const aproxData = 300
 
 	return &WalTransaction{
-		pool:          pool,
-		log:           log,
-		monitor:       monitor,
-		RelationStore: make(map[int32]RelationData),
-		Actions:       make([]ActionData, 0, aproxData),
+		pool:            pool,
+		log:             log,
+		monitor:         monitor,
+		RelationStore:   make(map[int32]RelationData),
+		Actions:         make([]ActionData, 0, aproxData),
+		includeTableMap: includeTableMap,
+		excludeTables:   excludeTables,
 	}
 }
 
@@ -215,76 +220,72 @@ func (w *WalTransaction) CreateActionData(
 
 // CreateEventsWithFilter filter WAL message by table,
 // action and create events for each value.
-func (w *WalTransaction) CreateEventsWithFilter(ctx context.Context, includeTableMap map[string][]string, excludeTables []string) <-chan *publisher.Event {
-	output := make(chan *publisher.Event)
+func (w *WalTransaction) CreateEventsWithFilter(ctx context.Context) []*publisher.Event {
+	var events []*publisher.Event
 
-	go func(ctx context.Context) {
-		for _, item := range w.Actions {
-			if err := ctx.Err(); err != nil {
-				w.log.Debug("create events with filter: context canceled")
-				break
-			}
-
-			dataOld := make(map[string]any, len(item.OldColumns))
-
-			for _, val := range item.OldColumns {
-				dataOld[val.name] = val.value
-			}
-
-			data := make(map[string]any, len(item.NewColumns))
-
-			for _, val := range item.NewColumns {
-				data[val.name] = val.value
-			}
-
-			event := w.pool.Get().(*publisher.Event)
-			event.ID = uuid.New()
-			event.Schema = item.Schema
-			event.Table = item.Table
-			event.Action = item.Kind.string()
-			event.Data = data
-			event.DataOld = dataOld
-			event.EventTime = *w.CommitTime
-
-			if len(item.NewColumns) > 0 {
-				var pk []interface{}
-				for _, val := range item.NewColumns {
-					if val.isKey {
-						pk = append(pk, data[val.name])
-					}
-				}
-				event.PrimaryKey = pk
-			}
-
-			if len(includeTableMap) > 0 {
-				actions, validTable := includeTableMap[item.Table]
-
-				validAction := inArray(actions, item.Kind.string())
-				if validTable && validAction {
-					output <- event
-					continue
-				}
-			} else if len(excludeTables) > 0 {
-				if !inArray(excludeTables, item.Table) {
-					output <- event
-					continue
-				}
-			}
-
-			w.monitor.IncFilterSkippedEvents(item.Table)
-
-			w.log.Debug(
-				"wal-message was skipped by filter",
-				slog.String("schema", item.Schema),
-				slog.String("table", item.Table),
-				slog.String("action", string(item.Kind)),
-			)
+	for _, item := range w.Actions {
+		if err := ctx.Err(); err != nil {
+			w.log.Debug("create events with filter: context canceled")
+			break
 		}
 
-		close(output)
-	}(ctx)
+		dataOld := make(map[string]any, len(item.OldColumns))
 
-	return output
+		for _, val := range item.OldColumns {
+			dataOld[val.name] = val.value
+		}
+
+		data := make(map[string]any, len(item.NewColumns))
+
+		for _, val := range item.NewColumns {
+			data[val.name] = val.value
+		}
+
+		event := w.pool.Get().(*publisher.Event)
+		event.ID = uuid.New()
+		event.Schema = item.Schema
+		event.Table = item.Table
+		event.Action = item.Kind.string()
+		event.Data = data
+		event.DataOld = dataOld
+		event.EventTime = *w.CommitTime
+
+		if len(item.NewColumns) > 0 {
+			var pk []interface{}
+			for _, val := range item.NewColumns {
+				if val.isKey {
+					pk = append(pk, data[val.name])
+				}
+			}
+			event.PrimaryKey = pk
+		}
+
+		if len(w.includeTableMap) > 0 {
+			actions, validTable := w.includeTableMap[item.Table]
+
+			validAction := inArray(actions, item.Kind.string())
+			if validTable && validAction {
+				events = append(events, event)
+				continue
+			}
+		} else if len(w.excludeTables) > 0 {
+			if !inArray(w.excludeTables, item.Table) {
+				events = append(events, event)
+				continue
+			}
+		}
+
+		w.monitor.IncFilterSkippedEvents(item.Table)
+
+		w.log.Debug(
+			"wal-message was skipped by filter",
+			slog.String("schema", item.Schema),
+			slog.String("table", item.Table),
+			slog.String("action", string(item.Kind)),
+		)
+	}
+
+	return events
 }
 
 // inArray checks whether the value is in an array.

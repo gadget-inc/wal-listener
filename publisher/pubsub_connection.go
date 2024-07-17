@@ -7,8 +7,6 @@ import (
 	"sync"
 
 	"cloud.google.com/go/pubsub"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // PubSubConnection represent Pub/Sub connection.
@@ -51,33 +49,19 @@ func (c *PubSubConnection) getTopic(topic string) *pubsub.Topic {
 
 	t := c.client.TopicInProject(topic, c.projectID)
 	t.EnableMessageOrdering = c.enableOrdering
-	t.PublishSettings.NumGoroutines = 1
-	t.PublishSettings.CountThreshold = 1
 	c.topics[topic] = t
 
 	return t
 }
 
-func (c *PubSubConnection) Publish(ctx context.Context, topic string, data []byte, orderingKey string) error {
+func (c *PubSubConnection) Publish(ctx context.Context, topic string, data []byte, orderingKey string) PublishResult {
 	t := c.getTopic(topic)
-	defer t.Flush()
 
-	res := t.Publish(ctx, &pubsub.Message{
+	return t.Publish(ctx, &pubsub.Message{
 		Data:        data,
 		OrderingKey: orderingKey,
 	})
 
-	if _, err := res.Get(ctx); err != nil {
-		c.logger.Error("Failed to publish message", "err", err)
-
-		if status.Code(err) == codes.NotFound {
-			return fmt.Errorf("topic not found %w", err)
-		}
-
-		return fmt.Errorf("get: %w", err)
-	}
-
-	return nil
 }
 
 func (c *PubSubConnection) Close() error {

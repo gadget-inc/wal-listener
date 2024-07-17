@@ -26,21 +26,21 @@ func NewRabbitPublisher(pubTopic string, conn *rabbitmq.Conn, publisher *rabbitm
 }
 
 // Publish send events, implements eventPublisher.
-func (p *RabbitPublisher) Publish(ctx context.Context, topic string, event *Event) error {
+func (p *RabbitPublisher) Publish(ctx context.Context, topic string, event *Event) PublishResult {
 	const contentTypeJSON = "application/json"
 
 	body, err := json.Marshal(event)
 	if err != nil {
-		return err
+		return Result(err)
 	}
 
-	return p.publisher.PublishWithContext(
+	return Result(p.publisher.PublishWithContext(
 		ctx,
 		body,
 		[]string{topic},
 		rabbitmq.WithPublishOptionsContentType(contentTypeJSON),
 		rabbitmq.WithPublishOptionsExchange(p.pt),
-	)
+	))
 }
 
 // Close represent finalization for RabbitMQ publisher.

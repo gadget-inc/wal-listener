@@ -23,10 +23,10 @@ func NewGooglePubSubPublisher(pubSubConnection *PubSubConnection, enableOrdering
 }
 
 // Publish send events, implements eventPublisher.
-func (p *GooglePubSubPublisher) Publish(ctx context.Context, topic string, event *Event) error {
+func (p *GooglePubSubPublisher) Publish(ctx context.Context, topic string, event *Event) PublishResult {
 	body, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
+		return NewErrorResult(fmt.Errorf("marshal: %w", err))
 	}
 	var orderingKey string
 	if p.enableOrdering {

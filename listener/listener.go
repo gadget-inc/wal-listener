@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -23,7 +24,7 @@ import (
 const pgOutputPlugin = "pgoutput"
 
 type eventPublisher interface {
-	Publish(context.Context, string, *publisher.Event) error
+	Publish(context.Context, string, *publisher.Event) publisher.PublishResult
 }
 
 type parser interface {
@@ -52,6 +53,16 @@ type monitor interface {
 	IncPublishedEvents(subject, table string)
 	IncFilterSkippedEvents(table string)
 	IncProblematicEvents(kind string)
+}
+
+type eventBatch struct {
+	events []*publisher.Event
+	lsn    uint64
+}
+
+type publishResultBatch struct {
+	events []*publisher.PublishResult
+	lsn    uint64
 }
 
 // Listener main service struct.
@@ -235,7 +246,7 @@ func (l *Listener) checkConnection(ctx context.Context) error {
 				return fmt.Errorf("repository: %w", errConnectionIsLost)
 			}
 		case <-ctx.Done():
-			l.log.Debug("cgeck connection: context was canceled")
+			l.log.Debug("check connection: context was canceled")
 
 			if err := l.Stop(); err != nil {
 				l.log.Error("failed to stop service", "err", err)
@@ -294,59 +305,67 @@ func (l *Listener) Stream(ctx context.Context) error {
 
 	go l.SendPeriodicHeartbeats(ctx)
 
-	pool := &sync.Pool{
-		New: func() any {
+	eventPool := &sync.Pool{
+		New: func() interface{} {
 			return &publisher.Event{}
 		},
 	}
 
-	tx := NewWalTransaction(l.log, pool, l.monitor)
+	wg := &sync.WaitGroup{}
+	pipeline := NewPipeline(Config{ProcessErrors: false})
+	tx := NewWalTransaction(l.log, eventPool, l.monitor, l.cfg.Listener.Include.Tables, l.cfg.Listener.Exclude.Tables)
 
-	for {
-		if err := ctx.Err(); err != nil {
-			l.log.Warn("stream: context canceled", "err", err)
+	pipeline.Pipe(1, func(raw interface{}) interface{} {
+		if raw == nil {
 			return nil
 		}
+		msg := raw.(*pgx.ReplicationMessage)
+		wg.Add(1)
 
-		msg, err := l.replicator.WaitForReplicationMessage(ctx)
-		if err != nil {
-			return fmt.Errorf("wait for replication message: %w", err)
+		if err := l.parser.ParseWalMessage(msg.WalMessage.WalData, tx); err != nil {
+			l.monitor.IncProblematicEvents(problemKindParse)
+			return fmt.Errorf("parse: %w", err)
 		}
 
-		if msg == nil {
-			l.log.Debug("got empty message")
-			continue
-		}
+		if tx.CommitTime != nil {
+			events := tx.CreateEventsWithFilter(ctx)
+			eventBatch := &eventBatch{
+				events: events,
+				lsn:    msg.WalMessage.WalStart,
+			}
 
-		if err = l.processMessage(ctx, msg, tx); err != nil {
-			return fmt.Errorf("process message: %w", err)
+			l.log.Debug("WAL message has been processed", slog.Uint64("wal", eventBatch.lsn))
+			tx.Clear()
+			return eventBatch
 		}
 
 		l.processHeartBeat(msg)
-	}
-}
 
-func (l *Listener) processMessage(ctx context.Context, msg *pgx.ReplicationMessage, tx *WalTransaction) error {
-	if msg.WalMessage == nil {
-		l.log.Debug("empty wal-message")
 		return nil
-	}
+	}).Pipe(runtime.NumCPU(), func(raw interface{}) interface{} {
+		if raw == nil {
+			return nil
+		}
 
-	l.log.Debug("WAL message has been received", slog.Uint64("wal", msg.WalMessage.WalStart))
+		batch := raw.(*eventBatch)
+		results := make([]publisher.PublishResult, len(batch.events))
+		subjectNames := make([]string, len(batch.events))
 
-	if err := l.parser.ParseWalMessage(msg.WalMessage.WalData, tx); err != nil {
-		l.monitor.IncProblematicEvents(problemKindParse)
-		return fmt.Errorf("parse: %w", err)
-	}
+		// loop over once triggering the publish of all the events
+		for i, event := range batch.events {
+			subjectNames[i] = event.SubjectName(l.cfg)
+			results[i] = l.publisher.Publish(ctx, subjectNames[i], event)
+		}
 
-	if tx.CommitTime != nil {
-		for event := range tx.CreateEventsWithFilter(ctx, l.cfg.Listener.Include.Tables, l.cfg.Listener.Exclude.Tables) {
-			subjectName := event.SubjectName(l.cfg)
-
-			if err := l.publisher.Publish(ctx, subjectName, event); err != nil {
+		// loop over a second time awaiting the result of each publish
+		for i, result := range results {
+			_, err := result.Get(ctx)
+			if err != nil {
 				l.monitor.IncProblematicEvents(problemKindPublish)
 				return fmt.Errorf("publish: %w", err)
 			}
+			subjectName := subjectNames[i]
+			event := batch.events[i]
 
 			l.monitor.IncPublishedEvents(subjectName, event.Table)
 
@@ -358,21 +377,63 @@ func (l *Listener) processMessage(ctx context.Context, msg *pgx.ReplicationMessa
 				slog.Uint64("lsn", l.readLSN()),
 			)
 
-			tx.pool.Put(event)
+			eventPool.Put(event)
 		}
 
-		tx.Clear()
-	}
+		return batch.lsn
+	})
 
-	if msg.WalMessage.WalStart > l.readLSN() {
-		if err := l.AckWalMessage(msg.WalMessage.WalStart); err != nil {
-			l.monitor.IncProblematicEvents(problemKindAck)
-			return fmt.Errorf("ack: %w", err)
+	go func() {
+		for {
+			if err := ctx.Err(); err != nil {
+				l.log.Warn("stream: context canceled", "err", err)
+				return
+			}
+
+			msg, err := l.replicator.WaitForReplicationMessage(ctx)
+			if err != nil {
+				wg.Add(1)
+				pipeline.Push(fmt.Errorf("wait for replication message: %w", err))
+				return
+			}
+
+			if msg == nil || msg.WalMessage == nil {
+				l.log.Debug("got empty message")
+				continue
+			}
+
+			pipeline.Push(msg)
 		}
+	}()
 
-		l.log.Debug("ack WAL message", slog.Uint64("lsn", l.readLSN()))
+	results := pipeline.Out()
+
+readLoop:
+	for {
+		select {
+		case <-ctx.Done():
+			l.log.Debug("context done, closing pipeline")
+			pipeline.Close()
+			// pop all pipeline results after closing it
+			for result := range results {
+				wg.Done()
+				err := l.processPipelineResult(result)
+				if err != nil {
+					return err
+				}
+			}
+			break readLoop
+		case result := <-results:
+			wg.Done()
+			err := l.processPipelineResult(result)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
+	l.log.Debug("waiting for processing")
+	wg.Wait()
 	return nil
 }
 
@@ -480,4 +541,29 @@ func (l *Listener) setLSN(lsn uint64) {
 	defer l.mu.Unlock()
 
 	l.lsn = lsn
+}
+
+func (l *Listener) processPipelineResult(raw interface{}) error {
+	if raw == nil {
+		return nil
+	}
+
+	switch v := raw.(type) {
+	case error:
+		l.log.Error("pipeline: error in pipeline", "err", v)
+		return v
+	case uint64:
+		if v > l.readLSN() {
+			if err := l.AckWalMessage(v); err != nil {
+				l.monitor.IncProblematicEvents(problemKindAck)
+				return fmt.Errorf("ack: %w", err)
+			}
+
+			l.log.Debug("ack WAL message", slog.Uint64("lsn", l.readLSN()))
+		}
+	default:
+		panic(fmt.Sprintf("unexpected type in pipeline: %T", v))
+	}
+
+	return nil
 }

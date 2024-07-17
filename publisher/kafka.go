@@ -23,17 +23,17 @@ func NewKafkaPublisher(producer sarama.SyncProducer) *KafkaPublisher {
 	return &KafkaPublisher{producer: producer}
 }
 
-func (p *KafkaPublisher) Publish(_ context.Context, topic string, event *Event) error {
+func (p *KafkaPublisher) Publish(_ context.Context, topic string, event *Event) PublishResult {
 	data, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
+		return Result(fmt.Errorf("marshal: %w", err))
 	}
 
-	if _, _, err = p.producer.SendMessage(prepareMessage(topic, data)); err != nil {
-		return fmt.Errorf("send message: %w", err)
+	partition, offset, err := p.producer.SendMessage(prepareMessage(topic, data))
+	if err != nil {
+		return Result(fmt.Errorf("send message: %w", err))
 	}
-
-	return nil
+	return NewSuccessResult(fmt.Sprintf("%d/%d", partition, offset))
 }
 
 // Close connection close.
