@@ -214,7 +214,7 @@ func (l *Listener) Process(ctx context.Context) error {
 		logger.Info("slot already exists, LSN updated")
 	}
 
-	group := new(errgroup.Group)
+	group, ctx := errgroup.WithContext(ctx)
 
 	group.Go(func() error {
 		return l.Stream(ctx)
@@ -415,12 +415,8 @@ readLoop:
 			l.log.Debug("context done, closing pipeline")
 			pipeline.Close()
 			// pop all pipeline results after closing it
-			for result := range results {
+			for range results {
 				wg.Done()
-				err := l.processPipelineResult(result)
-				if err != nil {
-					return err
-				}
 			}
 			break readLoop
 		case result := <-results:
@@ -550,7 +546,7 @@ func (l *Listener) processPipelineResult(raw interface{}) error {
 
 	switch v := raw.(type) {
 	case error:
-		l.log.Error("pipeline: error in pipeline", "err", v)
+		l.log.Error("pipeline outcome error", slog.Any("err", v))
 		return v
 	case uint64:
 		if v > l.readLSN() {
