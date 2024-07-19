@@ -171,8 +171,18 @@ docker image prune --filter label=stage=builder
 ```
 
 #### Docker Hub
+
 https://hub.docker.com/r/ihippik/wal-listener
-#### Example
+
+##### Example
 ```shell
 docker run -v $(pwd)/config.yml:/app/config.yml ihippik/wal-listener:tag
+```
+
+###### Publishing a new docker container
+
+Run:
+
+```shell
+docker buildx build --platform linux/amd64,linux/arm64 --push -t gcr.io/gadget-core-production/wal-listener:sha-(git rev-parse HEAD) .
 ```
