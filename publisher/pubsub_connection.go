@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"cloud.google.com/go/pubsub"
 )
@@ -49,6 +50,9 @@ func (c *PubSubConnection) getTopic(topic string) *pubsub.Topic {
 
 	t := c.client.TopicInProject(topic, c.projectID)
 	t.EnableMessageOrdering = c.enableOrdering
+	t.PublishSettings.DelayThreshold = 100 * time.Millisecond
+	t.PublishSettings.CountThreshold = 300
+
 	c.topics[topic] = t
 
 	return t
