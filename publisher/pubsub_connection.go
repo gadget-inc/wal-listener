@@ -7,8 +7,6 @@ import (
 	"sync"
 
 	"cloud.google.com/go/pubsub"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // PubSubConnection represent Pub/Sub connection.
@@ -55,27 +53,17 @@ func (c *PubSubConnection) getTopic(topic string) *pubsub.Topic {
 	return t
 }
 
-func (c *PubSubConnection) Publish(ctx context.Context, topic string, data []byte) error {
+func (c *PubSubConnection) Publish(ctx context.Context, topic string, data []byte) PublishResult {
 	t := c.getTopic(topic)
-	defer t.Flush()
 
-	var res *pubsub.PublishResult
-
-	res = t.Publish(ctx, &pubsub.Message{
+	return t.Publish(ctx, &pubsub.Message{
 		Data: data,
 	})
+}
 
-	if _, err := res.Get(ctx); err != nil {
-		c.logger.Error("Failed to publish message", "err", err)
-
-		if status.Code(err) == codes.NotFound {
-			return fmt.Errorf("topic not found %w", err)
-		}
-
-		return fmt.Errorf("get: %w", err)
-	}
-
-	return nil
+func (c *PubSubConnection) Flush(topic string) {
+	t := c.getTopic(topic)
+	t.Flush()
 }
 
 func (c *PubSubConnection) Close() error {
