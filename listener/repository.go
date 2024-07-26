@@ -1,10 +1,13 @@
 package listener
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
 
-	"github.com/jackc/pgx"
+	"github.com/jackc/pglogrepl"
+	"github.com/jackc/pgx/v5"
 )
 
 // RepositoryImpl service repository.
@@ -18,10 +21,10 @@ func NewRepository(conn *pgx.Conn) *RepositoryImpl {
 }
 
 // GetSlotLSN returns the value of the last offset for a specific slot.
-func (r RepositoryImpl) GetSlotLSN(slotName string) (string, error) {
+func (r RepositoryImpl) GetSlotLSN(ctx context.Context, slotName string) (string, error) {
 	var restartLSNStr string
 
-	err := r.conn.QueryRow("SELECT restart_lsn FROM pg_replication_slots WHERE slot_name=$1;", slotName).
+	err := r.conn.QueryRow(ctx, "SELECT restart_lsn FROM pg_replication_slots WHERE slot_name=$1;", slotName).
 		Scan(&restartLSNStr)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -32,8 +35,8 @@ func (r RepositoryImpl) GetSlotLSN(slotName string) (string, error) {
 }
 
 // CreatePublication create publication fo all.
-func (r RepositoryImpl) CreatePublication(name string) error {
-	if _, err := r.conn.Exec(`CREATE PUBLICATION "` + name + `" FOR ALL TABLES`); err != nil {
+func (r RepositoryImpl) CreatePublication(ctx context.Context, name string) error {
+	if _, err := r.conn.Exec(ctx, `CREATE PUBLICATION "`+name+`" FOR ALL TABLES`); err != nil {
 		return fmt.Errorf("exec: %w", err)
 	}
 
@@ -41,16 +44,21 @@ func (r RepositoryImpl) CreatePublication(name string) error {
 }
 
 // IsAlive check database connection problems.
-func (r RepositoryImpl) NewStandbyStatus(walPositions ...uint64) (status *pgx.StandbyStatus, err error) {
-	return pgx.NewStandbyStatus(walPositions...)
+func (r RepositoryImpl) NewStandbyStatus(lsn pglogrepl.LSN) pglogrepl.StandbyStatusUpdate {
+	return pglogrepl.StandbyStatusUpdate{
+		WALWritePosition: lsn,
+		WALFlushPosition: lsn,
+		WALApplyPosition: lsn,
+		ClientTime:       time.Now(),
+	}
 }
 
 // IsAlive check database connection problems.
-func (r RepositoryImpl) IsAlive() bool {
-	return r.conn.IsAlive()
+func (r RepositoryImpl) IsClosed() bool {
+	return r.conn.IsClosed()
 }
 
 // Close database connection.
-func (r RepositoryImpl) Close() error {
-	return r.conn.Close()
+func (r RepositoryImpl) Close(ctx context.Context) error {
+	return r.conn.Close(ctx)
 }

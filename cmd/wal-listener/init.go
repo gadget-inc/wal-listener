@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jackc/pgx"
+	pgxslog "github.com/induzo/gocom/database/pgx-slog"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/tracelog"
 	"github.com/nats-io/nats.go"
 
 	"github.com/ihippik/wal-listener/v2/config"
@@ -14,16 +16,14 @@ import (
 )
 
 // initPgxConnections initialise db and replication connections.
-func initPgxConnections(cfg *config.DatabaseCfg, logger *slog.Logger) (*pgx.Conn, *pgx.ReplicationConn, error) {
-	pgxConf := pgx.ConnConfig{
-		LogLevel: pgx.LogLevelInfo,
-		Logger:   pgxLogger{logger},
-		Host:     cfg.Host,
-		Port:     cfg.Port,
-		Database: cfg.Name,
-		User:     cfg.User,
-		Password: cfg.Password,
+func initPgxConnections(ctx context.Context, cfg *config.DatabaseCfg, logger *slog.Logger) (*pgx.Conn, error) {
+	connString := fmt.Sprintf("postgres://%s:%s@%s:%d/%s", cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name)
+	pgxConf, err := pgx.ParseConfig(connString)
+	if err != nil {
+		return nil, fmt.Errorf("db config: %w", err)
 	}
+
+	pgxConf.Tracer = &tracelog.TraceLog{Logger: pgxslog.NewLogger(logger), LogLevel: tracelog.LogLevelInfo}
 
 	if cfg.SSL != nil {
 		pgxConf.TLSConfig = &tls.Config{
@@ -31,26 +31,17 @@ func initPgxConnections(cfg *config.DatabaseCfg, logger *slog.Logger) (*pgx.Conn
 		}
 	}
 
-	pgConn, err := pgx.Connect(pgxConf)
+	pgConn, err := pgx.ConnectConfig(ctx, pgxConf)
 	if err != nil {
-		return nil, nil, fmt.Errorf("db connection: %w", err)
+		return nil, fmt.Errorf("db connection: %w", err)
 	}
 
-	rConnection, err := pgx.ReplicationConnect(pgxConf)
-	if err != nil {
-		return nil, nil, fmt.Errorf("replication connect: %w", err)
-	}
+	// rConnection, err := pgx.ReplicationConnect(pgxConf)
+	// if err != nil {
+	// 	return nil, nil, fmt.Errorf("replication connect: %w", err)
+	// }
 
-	return pgConn, rConnection, nil
-}
-
-type pgxLogger struct {
-	logger *slog.Logger
-}
-
-// Log DB message.
-func (l pgxLogger) Log(_ pgx.LogLevel, msg string, _ map[string]any) {
-	l.logger.Debug(msg)
+	return pgConn, nil
 }
 
 type eventPublisher interface {
