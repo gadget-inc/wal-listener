@@ -57,7 +57,7 @@ func main() {
 
 			go scfg.InitMetrics(cfg.Monitoring.PromAddr, logger)
 
-			conn, rConn, err := initPgxConnections(cfg.Database, logger)
+			conn, err := initPgxConnections(ctx, cfg.Database, logger)
 			if err != nil {
 				return fmt.Errorf("pgx connection: %w", err)
 			}
@@ -76,10 +76,10 @@ func main() {
 			service := listener.NewWalListener(
 				cfg,
 				logger,
-				listener.NewRepository(conn),
-				rConn,
+				conn,
 				pub,
 				listener.NewBinaryParser(logger, binary.BigEndian),
+				listener.NewRepository(conn),
 				config.NewMetrics(),
 			)
 

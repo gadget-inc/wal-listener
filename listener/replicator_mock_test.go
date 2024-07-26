@@ -3,7 +3,8 @@ package listener
 import (
 	"context"
 
-	"github.com/jackc/pgx"
+	"github.com/jackc/pglogrepl"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -40,7 +41,7 @@ func (r *replicatorMock) WaitForReplicationMessage(ctx context.Context) (mess *p
 	return args.Get(0).(*pgx.ReplicationMessage), args.Error(1)
 }
 
-func (r *replicatorMock) SendStandbyStatus(status *pgx.StandbyStatus) (err error) {
+func (r *replicatorMock) SendStandbyStatus(status *pglogrepl.StandbyStatusUpdate) (err error) {
 	return r.Called(status).Error(0)
 }
 
