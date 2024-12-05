@@ -17,6 +17,7 @@ type Event struct {
 	Data       map[string]any `json:"data"`
 	DataOld    map[string]any `json:"dataOld"`
 	EventTime  time.Time      `json:"commitTime"`
+	LSN        int64          `json:"lsn"`
 	PrimaryKey []string       `json:"primaryKey"`
 }
 

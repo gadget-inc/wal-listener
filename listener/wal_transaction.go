@@ -273,6 +273,7 @@ func (w *WalTransaction) CreateEventsWithFilter(ctx context.Context) []*publishe
 		event.Data = data
 		event.DataOld = dataOld
 		event.EventTime = *w.CommitTime
+		event.LSN = w.LSN
 		event.PrimaryKey = primaryKey
 
 		actions, found := w.includeTableMap[item.Table]
