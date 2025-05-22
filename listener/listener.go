@@ -339,9 +339,9 @@ func (l *Listener) Stream(ctx context.Context) error {
 	tx := NewWalTransaction(l.log, pool, l.monitor, l.cfg.Listener.Include.Tables, l.cfg.Listener.Exclude, l.cfg.Tags)
 
 	group, ctx := errgroup.WithContext(ctx)
-	messageChan := make(chan *pgproto3.CopyData, 20_000)
-	eventsChan := make(chan *messageAndEvents, 20_000)
-	resultChan := make(chan *eventAndPublishResult, 20_000)
+	messageChan := make(chan *pgproto3.CopyData, 1000)
+	eventsChan := make(chan *messageAndEvents, 1000)
+	resultChan := make(chan *eventAndPublishResult, 1000)
 
 	defer close(messageChan)
 	defer close(eventsChan)
@@ -435,6 +435,26 @@ func (l *Listener) Stream(ctx context.Context) error {
 							events: events,
 						}
 						tx.Clear()
+					} else if len(tx.Actions) == 1000 {
+						actions := []struct {
+							Schema string
+							Table  string
+							Kind   ActionKind
+						}{}
+
+						for i := range 100 {
+							actions = append(actions, struct {
+								Schema string
+								Table  string
+								Kind   ActionKind
+							}{
+								Schema: tx.Actions[i].Schema,
+								Table:  tx.Actions[i].Table,
+								Kind:   tx.Actions[i].Kind,
+							})
+						}
+
+						l.log.Info("ton of actions", slog.Any("actions", actions))
 					}
 				}
 			}
