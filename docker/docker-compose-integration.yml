@@ -6,7 +6,7 @@ volumes:
 
 x-postgres-common:
   &postgres-common
-  image: postgres:14-alpine
+  image: postgres:15-alpine
   user: postgres
   restart: always
   healthcheck:
