@@ -142,10 +142,10 @@ database:
   password: postgres
 
 listener:
-  slot_name: integration_test_slot_%d
-  ack_timeout: 10s
-  refresh_connection: 30s
-  heartbeat_interval: 10s
+  slotName: integration_test_slot_%d
+  ackTimeout: 10s
+  refreshConnection: 30s
+  heartbeatInterval: 10s
   include:
     tables:
       users: ["insert", "update", "delete"]

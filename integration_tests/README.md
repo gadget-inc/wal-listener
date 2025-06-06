@@ -39,4 +39,4 @@ The integration tests verify:
 
 ## CI Integration
 
-The integration tests run automatically in GitHub Actions as part of the CI pipeline. They are executed after the unit tests pass to ensure the wal-listener functionality works correctly with real PostgreSQL logical replication.
+The integration tests run automatically in GitHub Actions as part of the CI pipeline.
