@@ -41,8 +41,6 @@ func waitForDatabase(connString string, timeout time.Duration) error {
 	}
 }
 
-
-
 func cleanupDatabase(connString string) error {
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, connString)
@@ -50,6 +48,14 @@ func cleanupDatabase(connString string) error {
 		return err
 	}
 	defer conn.Close(ctx)
+
+	_, err = conn.Exec(ctx, `
+		SELECT pg_drop_replication_slot(slot_name) 
+		FROM pg_replication_slots 
+		WHERE slot_name LIKE 'integration_test_slot_%'
+	`)
+	if err != nil {
+	}
 
 	_, err = conn.Exec(ctx, "TRUNCATE public.users, public.orders, excluded_schema.internal_logs, public.excluded_table RESTART IDENTITY CASCADE")
 	return err

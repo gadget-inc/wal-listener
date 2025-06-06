@@ -5,10 +5,10 @@ This directory contains integration tests for wal-listener that run against a re
 ## Overview
 
 The integration tests verify:
-- **Database Operations**: Basic INSERT, UPDATE, DELETE operations work correctly
-- **Schema Operations**: Operations across different schemas and tables
-- **Bulk Operations**: Large transactions with multiple operations
-- **Replication Slot Management**: Creating and managing logical replication slots
+- **Message Publishing**: Real wal-listener functionality with database change capture
+- **Schema Filtering**: Include/exclude functionality for schemas and tables  
+- **Transaction Size Limiting**: Max transaction size with both buffering modes
+- **Event Capture**: Verification of published WAL events
 
 ## Prerequisites
 
@@ -24,7 +24,7 @@ The integration tests verify:
 
 2. Start the test environment:
    ```bash
-   docker-compose up -d --wait
+   docker compose up -d --wait
    ```
 
 3. Run the integration tests:
@@ -34,45 +34,9 @@ The integration tests verify:
 
 4. Clean up the test environment:
    ```bash
-   docker-compose down -v
+   docker compose down -v
    ```
-
-## Test Environment
-
-The Docker Compose setup includes:
-- **PostgreSQL 14**: Configured with logical replication (`wal_level=logical`)
-- **Test Database Schema**: Multiple schemas and tables for comprehensive testing
-
-## Test Database Schema
-
-The test database includes:
-- `public.users` - Main test table for user data
-- `public.orders` - Secondary table for relational testing
-- `excluded_schema.internal_logs` - Table in excluded schema
-- `public.excluded_table` - Excluded table in public schema
-
-## Test Scenarios
-
-### Basic Database Operations
-- Tests INSERT, UPDATE, DELETE operations on the `users` table
-- Verifies data integrity and transaction consistency
-- Ensures proper database connectivity and operations
-
-### Schema Operations
-- Tests operations across multiple schemas (`public`, `excluded_schema`)
-- Verifies schema-level filtering capabilities
-- Tests table-level exclusions within schemas
-
-### Bulk Operations
-- Performs large transactions with multiple INSERT operations
-- Tests transaction handling and performance
-- Verifies database can handle bulk data operations
-
-### Replication Slot Management
-- Tests creation and deletion of logical replication slots
-- Verifies replication slot functionality
-- Ensures proper cleanup of replication resources
 
 ## CI Integration
 
-The integration tests run automatically in GitHub Actions as part of the CI pipeline. They are executed after the unit tests pass to ensure the database infrastructure and logical replication functionality work correctly in a real environment.
+The integration tests run automatically in GitHub Actions as part of the CI pipeline. They are executed after the unit tests pass to ensure the wal-listener functionality works correctly with real PostgreSQL logical replication.

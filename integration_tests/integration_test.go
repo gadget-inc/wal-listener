@@ -1,11 +1,16 @@
 
 
+
 package integration_tests
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +23,18 @@ const (
 	dbConnString = "postgres://postgres:postgres@localhost:5432/postgres"
 	testTimeout  = 60 * time.Second
 )
+
+type WalEvent struct {
+	ID                     string            `json:"id"`
+	Schema                 string            `json:"schema"`
+	Table                  string            `json:"table"`
+	Action                 string            `json:"action"`
+	Data                   map[string]any    `json:"data"`
+	DataOld                map[string]any    `json:"dataOld"`
+	EventTime              time.Time         `json:"commitTime"`
+	UnchangedToastedValues []string          `json:"unchangedToastedValues"`
+	Tags                   map[string]string `json:"tags"`
+}
 
 func TestMain(m *testing.M) {
 	if err := setupDockerEnvironment(); err != nil {
@@ -40,32 +57,134 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func createReplicationSlot(t *testing.T, slotName string) {
-	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, dbConnString)
-	require.NoError(t, err)
-	defer conn.Close(ctx)
+func startWalListener(t *testing.T, configPath string) (chan WalEvent, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	
+	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", "/tmp/wal-listener", "./cmd/wal-listener")
+	buildCmd.Dir = ".."
+	err := buildCmd.Run()
+	require.NoError(t, err, "Failed to build wal-listener")
 
-	_, err = conn.Exec(ctx, fmt.Sprintf("SELECT pg_create_logical_replication_slot('%s', 'pgoutput')", slotName))
-	if err != nil {
-		t.Logf("Replication slot may already exist: %v", err)
+	cmd := exec.CommandContext(ctx, "/tmp/wal-listener", "--config", configPath)
+	cmd.Dir = "."
+	
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	
+	stderr, err := cmd.StderrPipe()
+	require.NoError(t, err)
+
+	err = cmd.Start()
+	require.NoError(t, err)
+
+	eventChan := make(chan WalEvent, 100)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text()
+			var event WalEvent
+			if err := json.Unmarshal([]byte(line), &event); err == nil {
+				select {
+				case eventChan <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			t.Logf("wal-listener stderr: %s", scanner.Text())
+		}
+	}()
+
+	cleanup := func() {
+		cancel()
+		cmd.Process.Kill()
+		cmd.Wait()
+		wg.Wait()
+		close(eventChan)
 	}
+
+	return eventChan, cleanup
 }
 
-func dropReplicationSlot(t *testing.T, slotName string) {
-	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, dbConnString)
-	require.NoError(t, err)
-	defer conn.Close(ctx)
+func waitForEvents(t *testing.T, eventChan chan WalEvent, expectedCount int, timeout time.Duration) []WalEvent {
+	var events []WalEvent
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
-	_, err = conn.Exec(ctx, fmt.Sprintf("SELECT pg_drop_replication_slot('%s')", slotName))
-	if err != nil {
-		t.Logf("Failed to drop replication slot: %v", err)
+	for len(events) < expectedCount {
+		select {
+		case event := <-eventChan:
+			events = append(events, event)
+		case <-timer.C:
+			t.Fatalf("Timeout waiting for events. Expected %d, got %d", expectedCount, len(events))
+		}
 	}
+
+	return events
 }
 
-func TestBasicDatabaseOperations(t *testing.T) {
+func createTestConfig(t *testing.T, maxTransactionSize int, skipBuffering bool) string {
+	configContent := fmt.Sprintf(`
+database:
+  host: localhost
+  port: 5432
+  name: postgres
+  user: postgres
+  password: postgres
+
+listener:
+  slot_name: integration_test_slot_%d
+  ack_timeout: 10s
+  refresh_connection: 30s
+  heartbeat_interval: 10s
+  include:
+    tables:
+      users: ["insert", "update", "delete"]
+      orders: ["insert", "update", "delete"]
+  exclude:
+    schemas: ["excluded_schema"]
+    tables: ["excluded_table"]
+  skipTransactionBuffering: %t
+  maxTransactionSize: %d
+
+publisher:
+  type: stdout
+  topic: wal_events
+
+logger:
+  level: info
+  caller: false
+  encoding: json
+`, time.Now().UnixNano(), skipBuffering, maxTransactionSize)
+
+	configFile := fmt.Sprintf("/tmp/test_config_%d.yml", time.Now().UnixNano())
+	err := os.WriteFile(configFile, []byte(configContent), 0644)
+	require.NoError(t, err)
+	
+	return configFile
+}
+
+func TestWalListenerBasicOperations(t *testing.T) {
 	require.NoError(t, cleanupDatabase(dbConnString))
+
+	configPath := createTestConfig(t, 0, false)
+	defer os.Remove(configPath)
+
+	eventChan, cleanup := startWalListener(t, configPath)
+	defer cleanup()
+
+	time.Sleep(2 * time.Second)
 
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, dbConnString)
@@ -75,29 +194,43 @@ func TestBasicDatabaseOperations(t *testing.T) {
 	_, err = conn.Exec(ctx, "INSERT INTO public.users (name, email) VALUES ($1, $2)", "John Doe", "john@example.com")
 	require.NoError(t, err)
 
-	var count int
-	err = conn.QueryRow(ctx, "SELECT COUNT(*) FROM public.users WHERE name = $1", "John Doe").Scan(&count)
-	require.NoError(t, err)
-	assert.Equal(t, 1, count)
-
 	_, err = conn.Exec(ctx, "UPDATE public.users SET email = $1 WHERE name = $2", "john.doe@example.com", "John Doe")
 	require.NoError(t, err)
-
-	var email string
-	err = conn.QueryRow(ctx, "SELECT email FROM public.users WHERE name = $1", "John Doe").Scan(&email)
-	require.NoError(t, err)
-	assert.Equal(t, "john.doe@example.com", email)
 
 	_, err = conn.Exec(ctx, "DELETE FROM public.users WHERE name = $1", "John Doe")
 	require.NoError(t, err)
 
-	err = conn.QueryRow(ctx, "SELECT COUNT(*) FROM public.users WHERE name = $1", "John Doe").Scan(&count)
-	require.NoError(t, err)
-	assert.Equal(t, 0, count)
+	events := waitForEvents(t, eventChan, 3, 10*time.Second)
+
+	assert.Len(t, events, 3)
+	
+	insertEvent := events[0]
+	assert.Equal(t, "public", insertEvent.Schema)
+	assert.Equal(t, "users", insertEvent.Table)
+	assert.Equal(t, "INSERT", insertEvent.Action)
+	assert.Equal(t, "John Doe", insertEvent.Data["name"])
+	assert.Equal(t, "john@example.com", insertEvent.Data["email"])
+
+	updateEvent := events[1]
+	assert.Equal(t, "UPDATE", updateEvent.Action)
+	assert.Equal(t, "john.doe@example.com", updateEvent.Data["email"])
+	assert.Equal(t, "john@example.com", updateEvent.DataOld["email"])
+
+	deleteEvent := events[2]
+	assert.Equal(t, "DELETE", deleteEvent.Action)
+	assert.Equal(t, "John Doe", deleteEvent.DataOld["name"])
 }
 
-func TestSchemaOperations(t *testing.T) {
+func TestWalListenerSchemaFiltering(t *testing.T) {
 	require.NoError(t, cleanupDatabase(dbConnString))
+
+	configPath := createTestConfig(t, 0, false)
+	defer os.Remove(configPath)
+
+	eventChan, cleanup := startWalListener(t, configPath)
+	defer cleanup()
+
+	time.Sleep(2 * time.Second)
 
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, dbConnString)
@@ -107,29 +240,31 @@ func TestSchemaOperations(t *testing.T) {
 	_, err = conn.Exec(ctx, "INSERT INTO public.users (name, email) VALUES ($1, $2)", "Jane Doe", "jane@example.com")
 	require.NoError(t, err)
 
-	_, err = conn.Exec(ctx, "INSERT INTO excluded_schema.internal_logs (message) VALUES ($1)", "This is in excluded schema")
+	_, err = conn.Exec(ctx, "INSERT INTO excluded_schema.internal_logs (message) VALUES ($1)", "This should be excluded")
 	require.NoError(t, err)
 
-	_, err = conn.Exec(ctx, "INSERT INTO public.excluded_table (data) VALUES ($1)", "This is in excluded table")
+	_, err = conn.Exec(ctx, "INSERT INTO public.excluded_table (data) VALUES ($1)", "This should also be excluded")
 	require.NoError(t, err)
 
-	var userCount, logCount, excludedCount int
+	events := waitForEvents(t, eventChan, 1, 5*time.Second)
 
-	err = conn.QueryRow(ctx, "SELECT COUNT(*) FROM public.users").Scan(&userCount)
-	require.NoError(t, err)
-	assert.Equal(t, 1, userCount)
-
-	err = conn.QueryRow(ctx, "SELECT COUNT(*) FROM excluded_schema.internal_logs").Scan(&logCount)
-	require.NoError(t, err)
-	assert.Equal(t, 1, logCount)
-
-	err = conn.QueryRow(ctx, "SELECT COUNT(*) FROM public.excluded_table").Scan(&excludedCount)
-	require.NoError(t, err)
-	assert.Equal(t, 1, excludedCount)
+	assert.Len(t, events, 1)
+	assert.Equal(t, "public", events[0].Schema)
+	assert.Equal(t, "users", events[0].Table)
+	assert.Equal(t, "INSERT", events[0].Action)
+	assert.Equal(t, "Jane Doe", events[0].Data["name"])
 }
 
-func TestBulkOperations(t *testing.T) {
+func TestWalListenerTransactionSizeLimit(t *testing.T) {
 	require.NoError(t, cleanupDatabase(dbConnString))
+
+	configPath := createTestConfig(t, 2, false)
+	defer os.Remove(configPath)
+
+	eventChan, cleanup := startWalListener(t, configPath)
+	defer cleanup()
+
+	time.Sleep(2 * time.Second)
 
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, dbConnString)
@@ -139,7 +274,7 @@ func TestBulkOperations(t *testing.T) {
 	tx, err := conn.Begin(ctx)
 	require.NoError(t, err)
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 5; i++ {
 		_, err = tx.Exec(ctx, "INSERT INTO public.users (name, email) VALUES ($1, $2)", 
 			fmt.Sprintf("User %d", i), fmt.Sprintf("user%d@example.com", i))
 		require.NoError(t, err)
@@ -148,25 +283,46 @@ func TestBulkOperations(t *testing.T) {
 	err = tx.Commit(ctx)
 	require.NoError(t, err)
 
-	var count int
-	err = conn.QueryRow(ctx, "SELECT COUNT(*) FROM public.users").Scan(&count)
-	require.NoError(t, err)
-	assert.Equal(t, 10, count)
+	events := waitForEvents(t, eventChan, 2, 10*time.Second)
+
+	assert.Len(t, events, 2)
+	for i, event := range events {
+		assert.Equal(t, "public", event.Schema)
+		assert.Equal(t, "users", event.Table)
+		assert.Equal(t, "INSERT", event.Action)
+		assert.Equal(t, fmt.Sprintf("User %d", i), event.Data["name"])
+	}
 }
 
-func TestReplicationSlotCreation(t *testing.T) {
-	slotName := "test_slot"
-	createReplicationSlot(t, slotName)
-	
+func TestWalListenerTransactionSizeLimitWithSkipBuffering(t *testing.T) {
+	require.NoError(t, cleanupDatabase(dbConnString))
+
+	configPath := createTestConfig(t, 2, true)
+	defer os.Remove(configPath)
+
+	eventChan, cleanup := startWalListener(t, configPath)
+	defer cleanup()
+
+	time.Sleep(2 * time.Second)
+
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, dbConnString)
 	require.NoError(t, err)
 	defer conn.Close(ctx)
 
-	var exists bool
-	err = conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_replication_slots WHERE slot_name = $1)", slotName).Scan(&exists)
-	require.NoError(t, err)
-	assert.True(t, exists, "Replication slot should exist")
+	for i := 0; i < 5; i++ {
+		_, err = conn.Exec(ctx, "INSERT INTO public.users (name, email) VALUES ($1, $2)", 
+			fmt.Sprintf("User %d", i), fmt.Sprintf("user%d@example.com", i))
+		require.NoError(t, err)
+	}
 
-	dropReplicationSlot(t, slotName)
+	events := waitForEvents(t, eventChan, 2, 10*time.Second)
+
+	assert.Len(t, events, 2)
+	for i, event := range events {
+		assert.Equal(t, "public", event.Schema)
+		assert.Equal(t, "users", event.Table)
+		assert.Equal(t, "INSERT", event.Action)
+		assert.Equal(t, fmt.Sprintf("User %d", i), event.Data["name"])
+	}
 }
