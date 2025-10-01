@@ -212,6 +212,8 @@ func (l *Listener) Process(ctx context.Context) error {
 		logger.Warn("publication creation was skipped", "err", err)
 	}
 
+	logger.Warn("test log message")
+
 	ident, err := l.replicator.IdentifySystem()
 	if err != nil {
 		return fmt.Errorf("identify system: %w", err)
@@ -373,6 +375,13 @@ func (l *Listener) Stream(ctx context.Context) error {
 			case <-ticker.C:
 				l.log.Info(
 					"channel status",
+					slog.Int("messageChan", len(messageChan)),
+					slog.Int("eventsChan", len(eventsChan)),
+					slog.Int("resultChan", len(resultChan)),
+					slog.String("lsn", l.readLSN().String()),
+				)
+				l.log.Info(
+					"new log line",
 					slog.Int("messageChan", len(messageChan)),
 					slog.Int("eventsChan", len(eventsChan)),
 					slog.Int("resultChan", len(resultChan)),
